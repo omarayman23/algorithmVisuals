@@ -18,41 +18,38 @@ const ALGORITHMS = [
 
 const MazeGame = ({ algorithm, onComplete, gridSize }) => {
   const [grid, setGrid] = useState([]);
-  const [visited, setVisited] = useState(new Set());
+  const [start, setStart] = useState({ x: 0, y: 0 });
+  const [end, setEnd] = useState({ x: gridSize - 1, y: gridSize - 1 });
   const [current, setCurrent] = useState(null);
-  const [found, setFound] = useState(false);
+  const [visited, setVisited] = useState(new Set());
+  const [path, setPath] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [found, setFound] = useState(false);
+  const [queue, setQueue] = useState([]);
+  const [stack, setStack] = useState([]);
   const [speed, setSpeed] = useState(100);
-  
-  const queueRef = useRef([]);
-  const stackRef = useRef([]);
   const intervalRef = useRef(null);
-  const visitedRef = useRef(new Set());
-
-  const end = { x: gridSize - 1, y: gridSize - 1 };
 
   useEffect(() => {
     initializeGrid();
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
   }, [algorithm, gridSize]);
 
   const initializeGrid = () => {
     const newGrid = Array(gridSize).fill(null).map((_, y) => 
       Array(gridSize).fill(null).map((_, x) => ({
         x, y,
-        isWall: Math.random() < 0.25 && !(x === 0 && y === 0) && !(x === gridSize - 1 && y === gridSize - 1)
+        isWall: Math.random() < 0.25 && !(x === 0 && y === 0) && !(x === gridSize - 1 && y === gridSize - 1),
+        isStart: x === 0 && y === 0,
+        isEnd: x === gridSize - 1 && y === gridSize - 1,
       }))
     );
     setGrid(newGrid);
-    setCurrent({ x: 0, y: 0 });
-    setVisited(new Set(['0,0']));
+    setCurrent(start);
+    setVisited(new Set());
+    setPath([]);
     setFound(false);
-    setIsRunning(false);
-    visitedRef.current = new Set(['0,0']);
-    queueRef.current = [{ x: 0, y: 0 }];
-    stackRef.current = [{ x: 0, y: 0 }];
+    setQueue([start]);
+    setStack([start]);
   };
 
   const getNeighbors = (pos) => {
@@ -62,70 +59,94 @@ const MazeGame = ({ algorithm, onComplete, gridSize }) => {
     for (const [dx, dy] of directions) {
       const newX = pos.x + dx;
       const newY = pos.y + dy;
-      const key = `${newX},${newY}`;
       
-      if (newX >= 0 && newX < gridSize && newY >= 0 && newY < gridSize && 
-          !grid[newY][newX].isWall && !visitedRef.current.has(key)) {
-        neighbors.push({ x: newX, y: newY });
+      if (newX >= 0 && newX < gridSize && newY >= 0 && newY < gridSize) {
+        const cell = grid[newY][newX];
+        if (!cell.isWall && !visited.has(`${newX},${newY}`)) {
+          neighbors.push({ x: newX, y: newY });
+        }
       }
     }
     return neighbors;
   };
 
-  const step = () => {
-    const queue = queueRef.current;
-    const stack = stackRef.current;
-    
-    if ((algorithm === 'bfs' || algorithm === 'dijkstra' || algorithm === 'astar') && queue.length === 0) {
-      setIsRunning(false);
-      return;
-    }
-    
-    if (algorithm === 'dfs' && stack.length === 0) {
+  const stepBFS = () => {
+    if (queue.length === 0 || found) {
       setIsRunning(false);
       return;
     }
 
-    const curr = algorithm === 'dfs' ? stack.pop() : queue.shift();
-    const key = `${curr.x},${curr.y}`;
+    const current = queue.shift();
+    const key = `${current.x},${current.y}`;
+    
+    if (visited.has(key)) return;
 
-    if (visitedRef.current.has(key)) return;
+    const newVisited = new Set(visited);
+    newVisited.add(key);
+    setVisited(newVisited);
+    setCurrent(current);
+    setPath([...path, current]);
 
-    visitedRef.current.add(key);
-    setVisited(new Set(visitedRef.current));
-    setCurrent(curr);
-
-    if (curr.x === end.x && curr.y === end.y) {
+    if (current.x === end.x && current.y === end.y) {
       setFound(true);
       setIsRunning(false);
-      if (intervalRef.current) clearInterval(intervalRef.current);
       onComplete();
       return;
     }
 
-    const neighbors = getNeighbors(curr);
-    
-    if (algorithm === 'dfs') {
-      stackRef.current.push(...neighbors.reverse());
-    } else {
-      queueRef.current.push(...neighbors);
+    const neighbors = getNeighbors(current);
+    setQueue([...queue, ...neighbors]);
+  };
+
+  const stepDFS = () => {
+    if (stack.length === 0 || found) {
+      setIsRunning(false);
+      return;
     }
+
+    const current = stack.pop();
+    const key = `${current.x},${current.y}`;
+    
+    if (visited.has(key)) return;
+
+    const newVisited = new Set(visited);
+    newVisited.add(key);
+    setVisited(newVisited);
+    setCurrent(current);
+    setPath([...path, current]);
+
+    if (current.x === end.x && current.y === end.y) {
+      setFound(true);
+      setIsRunning(false);
+      onComplete();
+      return;
+    }
+
+    const neighbors = getNeighbors(current);
+    setStack([...stack, ...neighbors.reverse()]);
   };
 
   useEffect(() => {
-    if (isRunning && !found) {
-      intervalRef.current = setInterval(step, speed);
+    if (isRunning) {
+      intervalRef.current = setInterval(() => {
+        if (algorithm === 'bfs' || algorithm === 'dijkstra' || algorithm === 'astar') {
+          stepBFS();
+        } else if (algorithm === 'dfs') {
+          stepDFS();
+        }
+      }, speed);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
     }
+
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [isRunning, found, speed]);
+  }, [isRunning, queue, stack, visited, found, speed]);
 
   const toggleRunning = () => setIsRunning(!isRunning);
   const reset = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    setIsRunning(false);
     initializeGrid();
   };
 
@@ -135,19 +156,33 @@ const MazeGame = ({ algorithm, onComplete, gridSize }) => {
     <div className="flex flex-col space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex space-x-3">
-          <button onClick={toggleRunning} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center space-x-2 font-medium">
+          <button
+            onClick={toggleRunning}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center space-x-2 font-medium"
+          >
             {isRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             <span>{isRunning ? 'Pause' : 'Start'}</span>
           </button>
-          <button onClick={reset} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 flex items-center space-x-2 font-medium">
+          <button
+            onClick={reset}
+            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 flex items-center space-x-2 font-medium"
+          >
             <RotateCcw className="w-4 h-4" />
             <span>Reset</span>
           </button>
         </div>
+
         <div className="flex items-center space-x-4">
           <label className="flex items-center space-x-2 text-sm text-gray-700">
             <span>Speed:</span>
-            <input type="range" min="10" max="500" value={501 - speed} onChange={(e) => setSpeed(501 - Number(e.target.value))} className="w-32" />
+            <input
+              type="range"
+              min="10"
+              max="500"
+              value={speed}
+              onChange={(e) => setSpeed(Number(e.target.value))}
+              className="w-32"
+            />
           </label>
           {found && (
             <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2">
@@ -163,25 +198,49 @@ const MazeGame = ({ algorithm, onComplete, gridSize }) => {
           {grid.map((row, y) => 
             row.map((cell, x) => {
               const key = `${x},${y}`;
+              const isVisited = visited.has(key);
+              const isCurrent = current?.x === x && current?.y === y;
+              
               let bgColor = 'bg-white';
               if (cell.isWall) bgColor = 'bg-gray-800';
-              else if (x === 0 && y === 0) bgColor = 'bg-green-500';
-              else if (x === end.x && y === end.y) bgColor = 'bg-red-500';
-              else if (current?.x === x && current?.y === y) bgColor = 'bg-blue-500';
-              else if (visited.has(key)) bgColor = 'bg-blue-100';
+              else if (cell.isStart) bgColor = 'bg-green-500';
+              else if (cell.isEnd) bgColor = 'bg-red-500';
+              else if (isCurrent) bgColor = 'bg-blue-500';
+              else if (isVisited) bgColor = 'bg-blue-100';
 
-              return <div key={key} className={`${bgColor} border border-gray-100`} style={{ width: `${cellSize}px`, height: `${cellSize}px` }} />;
+              return (
+                <div
+                  key={key}
+                  className={`${bgColor} border border-gray-100`}
+                  style={{ width: `${cellSize}px`, height: `${cellSize}px` }}
+                />
+              );
             })
           )}
         </div>
       </div>
       
       <div className="flex space-x-6 text-sm text-gray-600">
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-green-500 border border-gray-300"></div><span>Start</span></div>
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-red-500 border border-gray-300"></div><span>End</span></div>
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-gray-800 border border-gray-300"></div><span>Wall</span></div>
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-blue-100 border border-gray-300"></div><span>Visited</span></div>
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-blue-500 border border-gray-300"></div><span>Current</span></div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-green-500 border border-gray-300"></div>
+          <span>Start</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-red-500 border border-gray-300"></div>
+          <span>End</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-gray-800 border border-gray-300"></div>
+          <span>Wall</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-blue-100 border border-gray-300"></div>
+          <span>Visited</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-blue-500 border border-gray-300"></div>
+          <span>Current</span>
+        </div>
       </div>
     </div>
   );
@@ -193,16 +252,12 @@ const SortingGame = ({ algorithm, onComplete, arraySize }) => {
   const [sorted, setSorted] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
+  const [steps, setSteps] = useState([]);
   const [speed, setSpeed] = useState(50);
-  
-  const stepsRef = useRef([]);
   const intervalRef = useRef(null);
 
   useEffect(() => {
     initializeArray();
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
   }, [algorithm, arraySize]);
 
   const initializeArray = () => {
@@ -212,147 +267,194 @@ const SortingGame = ({ algorithm, onComplete, arraySize }) => {
     setSorted([]);
     setCurrentStep(0);
     setIsRunning(false);
-    stepsRef.current = generateSteps(newArray);
+    
+    if (algorithm === 'bubble') setSteps(generateBubbleSortSteps(newArray));
+    else if (algorithm === 'quick') setSteps(generateQuickSortSteps(newArray));
+    else if (algorithm === 'merge') setSteps(generateMergeSortSteps(newArray));
+    else if (algorithm === 'heap') setSteps(generateHeapSortSteps(newArray));
+    else if (algorithm === 'insertion') setSteps(generateInsertionSortSteps(newArray));
   };
 
-  const generateSteps = (arr) => {
+  const generateBubbleSortSteps = (arr) => {
     const steps = [];
     const tempArr = [...arr];
     
-    if (algorithm === 'bubble') {
-      for (let i = 0; i < tempArr.length; i++) {
-        for (let j = 0; j < tempArr.length - i - 1; j++) {
+    for (let i = 0; i < tempArr.length; i++) {
+      for (let j = 0; j < tempArr.length - i - 1; j++) {
+        steps.push({ array: [...tempArr], comparing: [j, j + 1], sorted: [] });
+        
+        if (tempArr[j] > tempArr[j + 1]) {
+          [tempArr[j], tempArr[j + 1]] = [tempArr[j + 1], tempArr[j]];
           steps.push({ array: [...tempArr], comparing: [j, j + 1], sorted: [] });
-          if (tempArr[j] > tempArr[j + 1]) {
-            [tempArr[j], tempArr[j + 1]] = [tempArr[j + 1], tempArr[j]];
-            steps.push({ array: [...tempArr], comparing: [j, j + 1], sorted: [] });
-          }
         }
       }
-    } else if (algorithm === 'insertion') {
-      for (let i = 1; i < tempArr.length; i++) {
-        const key = tempArr[i];
-        let j = i - 1;
-        while (j >= 0 && tempArr[j] > key) {
-          steps.push({ array: [...tempArr], comparing: [j, j + 1], sorted: [] });
-          tempArr[j + 1] = tempArr[j];
-          j--;
-        }
-        tempArr[j + 1] = key;
+    }
+    steps.push({ array: [...tempArr], comparing: [], sorted: Array.from({ length: tempArr.length }, (_, i) => i) });
+    return steps;
+  };
+
+  const generateQuickSortSteps = (arr) => {
+    const steps = [];
+    const tempArr = [...arr];
+    
+    const quickSort = (low, high) => {
+      if (low < high) {
+        const pi = partition(low, high);
+        quickSort(low, pi - 1);
+        quickSort(pi + 1, high);
       }
-    } else if (algorithm === 'quick') {
-      quickSort(tempArr, 0, tempArr.length - 1, steps);
-    } else if (algorithm === 'merge') {
-      mergeSort(tempArr, 0, tempArr.length - 1, steps);
-    } else if (algorithm === 'heap') {
-      heapSort(tempArr, steps);
+    };
+    
+    const partition = (low, high) => {
+      const pivot = tempArr[high];
+      let i = low - 1;
+      
+      for (let j = low; j < high; j++) {
+        steps.push({ array: [...tempArr], comparing: [j, high], sorted: [] });
+        
+        if (tempArr[j] < pivot) {
+          i++;
+          [tempArr[i], tempArr[j]] = [tempArr[j], tempArr[i]];
+          steps.push({ array: [...tempArr], comparing: [i, j], sorted: [] });
+        }
+      }
+      
+      [tempArr[i + 1], tempArr[high]] = [tempArr[high], tempArr[i + 1]];
+      return i + 1;
+    };
+    
+    quickSort(0, tempArr.length - 1);
+    steps.push({ array: [...tempArr], comparing: [], sorted: Array.from({ length: tempArr.length }, (_, i) => i) });
+    return steps;
+  };
+
+  const generateMergeSortSteps = (arr) => {
+    const steps = [];
+    const tempArr = [...arr];
+    
+    const merge = (left, mid, right) => {
+      const leftArr = tempArr.slice(left, mid + 1);
+      const rightArr = tempArr.slice(mid + 1, right + 1);
+      let i = 0, j = 0, k = left;
+      
+      while (i < leftArr.length && j < rightArr.length) {
+        steps.push({ array: [...tempArr], comparing: [left + i, mid + 1 + j], sorted: [] });
+        
+        if (leftArr[i] <= rightArr[j]) {
+          tempArr[k] = leftArr[i];
+          i++;
+        } else {
+          tempArr[k] = rightArr[j];
+          j++;
+        }
+        k++;
+      }
+      
+      while (i < leftArr.length) {
+        tempArr[k] = leftArr[i];
+        i++;
+        k++;
+      }
+      
+      while (j < rightArr.length) {
+        tempArr[k] = rightArr[j];
+        j++;
+        k++;
+      }
+    };
+    
+    const mergeSort = (left, right) => {
+      if (left < right) {
+        const mid = Math.floor((left + right) / 2);
+        mergeSort(left, mid);
+        mergeSort(mid + 1, right);
+        merge(left, mid, right);
+      }
+    };
+    
+    mergeSort(0, tempArr.length - 1);
+    steps.push({ array: [...tempArr], comparing: [], sorted: Array.from({ length: tempArr.length }, (_, i) => i) });
+    return steps;
+  };
+
+  const generateHeapSortSteps = (arr) => {
+    const steps = [];
+    const tempArr = [...arr];
+    const n = tempArr.length;
+    
+    const heapify = (n, i) => {
+      let largest = i;
+      const left = 2 * i + 1;
+      const right = 2 * i + 2;
+      
+      if (left < n && tempArr[left] > tempArr[largest]) largest = left;
+      if (right < n && tempArr[right] > tempArr[largest]) largest = right;
+      
+      if (largest !== i) {
+        steps.push({ array: [...tempArr], comparing: [i, largest], sorted: [] });
+        [tempArr[i], tempArr[largest]] = [tempArr[largest], tempArr[i]];
+        heapify(n, largest);
+      }
+    };
+    
+    for (let i = Math.floor(n / 2) - 1; i >= 0; i--) heapify(n, i);
+    
+    for (let i = n - 1; i > 0; i--) {
+      steps.push({ array: [...tempArr], comparing: [0, i], sorted: [] });
+      [tempArr[0], tempArr[i]] = [tempArr[i], tempArr[0]];
+      heapify(i, 0);
     }
     
     steps.push({ array: [...tempArr], comparing: [], sorted: Array.from({ length: tempArr.length }, (_, i) => i) });
     return steps;
   };
 
-  const quickSort = (arr, low, high, steps) => {
-    if (low < high) {
-      const pi = partition(arr, low, high, steps);
-      quickSort(arr, low, pi - 1, steps);
-      quickSort(arr, pi + 1, high, steps);
-    }
-  };
-
-  const partition = (arr, low, high, steps) => {
-    const pivot = arr[high];
-    let i = low - 1;
-    for (let j = low; j < high; j++) {
-      steps.push({ array: [...arr], comparing: [j, high], sorted: [] });
-      if (arr[j] < pivot) {
-        i++;
-        [arr[i], arr[j]] = [arr[j], arr[i]];
-      }
-    }
-    [arr[i + 1], arr[high]] = [arr[high], arr[i + 1]];
-    return i + 1;
-  };
-
-  const mergeSort = (arr, left, right, steps) => {
-    if (left < right) {
-      const mid = Math.floor((left + right) / 2);
-      mergeSort(arr, left, mid, steps);
-      mergeSort(arr, mid + 1, right, steps);
-      merge(arr, left, mid, right, steps);
-    }
-  };
-
-  const merge = (arr, left, mid, right, steps) => {
-    const leftArr = arr.slice(left, mid + 1);
-    const rightArr = arr.slice(mid + 1, right + 1);
-    let i = 0, j = 0, k = left;
+  const generateInsertionSortSteps = (arr) => {
+    const steps = [];
+    const tempArr = [...arr];
     
-    while (i < leftArr.length && j < rightArr.length) {
-      steps.push({ array: [...arr], comparing: [left + i, mid + 1 + j], sorted: [] });
-      if (leftArr[i] <= rightArr[j]) {
-        arr[k] = leftArr[i];
-        i++;
-      } else {
-        arr[k] = rightArr[j];
-        j++;
+    for (let i = 1; i < tempArr.length; i++) {
+      const key = tempArr[i];
+      let j = i - 1;
+      
+      while (j >= 0 && tempArr[j] > key) {
+        steps.push({ array: [...tempArr], comparing: [j, j + 1], sorted: [] });
+        tempArr[j + 1] = tempArr[j];
+        j--;
       }
-      k++;
+      tempArr[j + 1] = key;
     }
-    while (i < leftArr.length) { arr[k] = leftArr[i]; i++; k++; }
-    while (j < rightArr.length) { arr[k] = rightArr[j]; j++; k++; }
-  };
-
-  const heapSort = (arr, steps) => {
-    const n = arr.length;
     
-    const heapify = (n, i) => {
-      let largest = i;
-      const left = 2 * i + 1;
-      const right = 2 * i + 2;
-      if (left < n && arr[left] > arr[largest]) largest = left;
-      if (right < n && arr[right] > arr[largest]) largest = right;
-      if (largest !== i) {
-        steps.push({ array: [...arr], comparing: [i, largest], sorted: [] });
-        [arr[i], arr[largest]] = [arr[largest], arr[i]];
-        heapify(n, largest);
-      }
-    };
-    
-    for (let i = Math.floor(n / 2) - 1; i >= 0; i--) heapify(n, i);
-    for (let i = n - 1; i > 0; i--) {
-      [arr[0], arr[i]] = [arr[i], arr[0]];
-      heapify(i, 0);
-    }
+    steps.push({ array: [...tempArr], comparing: [], sorted: Array.from({ length: tempArr.length }, (_, i) => i) });
+    return steps;
   };
 
   useEffect(() => {
-    if (isRunning && currentStep < stepsRef.current.length) {
+    if (isRunning && currentStep < steps.length) {
       intervalRef.current = setInterval(() => {
-        const step = stepsRef.current[currentStep];
+        const step = steps[currentStep];
         setArray(step.array);
         setComparing(step.comparing);
         setSorted(step.sorted);
-        setCurrentStep(prev => {
-          if (prev >= stepsRef.current.length - 1) {
-            setIsRunning(false);
-            onComplete();
-            return prev;
-          }
-          return prev + 1;
-        });
+        setCurrentStep(prev => prev + 1);
+        
+        if (currentStep >= steps.length - 1) {
+          setIsRunning(false);
+          onComplete();
+        }
       }, speed);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
     }
+
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [isRunning, currentStep, speed]);
+  }, [isRunning, currentStep, steps, speed]);
 
   const toggleRunning = () => setIsRunning(!isRunning);
   const reset = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    setIsRunning(false);
     initializeArray();
   };
 
@@ -362,24 +464,38 @@ const SortingGame = ({ algorithm, onComplete, arraySize }) => {
     <div className="flex flex-col space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex space-x-3">
-          <button onClick={toggleRunning} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center space-x-2 font-medium">
+          <button
+            onClick={toggleRunning}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center space-x-2 font-medium"
+          >
             {isRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             <span>{isRunning ? 'Pause' : 'Start'}</span>
           </button>
-          <button onClick={reset} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 flex items-center space-x-2 font-medium">
+          <button
+            onClick={reset}
+            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 flex items-center space-x-2 font-medium"
+          >
             <RotateCcw className="w-4 h-4" />
             <span>Reset</span>
           </button>
         </div>
+
         <div className="flex items-center space-x-4">
           <label className="flex items-center space-x-2 text-sm text-gray-700">
             <span>Speed:</span>
-            <input type="range" min="10" max="200" value={210 - speed} onChange={(e) => setSpeed(210 - Number(e.target.value))} className="w-32" />
+            <input
+              type="range"
+              min="10"
+              max="200"
+              value={speed}
+              onChange={(e) => setSpeed(Number(e.target.value))}
+              className="w-32"
+            />
           </label>
-          {currentStep >= stepsRef.current.length - 1 && stepsRef.current.length > 0 && (
+          {currentStep >= steps.length - 1 && steps.length > 0 && (
             <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2">
               <Check className="w-4 h-4" />
-              <span>Sorted in {stepsRef.current.length} operations</span>
+              <span>Sorted in {steps.length} operations</span>
             </div>
           )}
         </div>
@@ -393,7 +509,11 @@ const SortingGame = ({ algorithm, onComplete, arraySize }) => {
             if (sorted.includes(idx)) bgColor = 'bg-green-500';
             
             return (
-              <div key={idx} className={`${bgColor} transition-all duration-100 flex items-end justify-center`} style={{ width: `${barWidth}px`, height: `${value * 3}px` }}>
+              <div
+                key={idx}
+                className={`${bgColor} transition-all duration-100 flex items-end justify-center`}
+                style={{ width: `${barWidth}px`, height: `${value * 3}px` }}
+              >
                 {arraySize <= 30 && <span className="text-xs text-white font-medium">{value}</span>}
               </div>
             );
@@ -402,9 +522,18 @@ const SortingGame = ({ algorithm, onComplete, arraySize }) => {
       </div>
       
       <div className="flex space-x-6 text-sm text-gray-600">
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-gray-400"></div><span>Unsorted</span></div>
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-blue-500"></div><span>Comparing</span></div>
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-green-500"></div><span>Sorted</span></div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-gray-400"></div>
+          <span>Unsorted</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-blue-500"></div>
+          <span>Comparing</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-green-500"></div>
+          <span>Sorted</span>
+        </div>
       </div>
     </div>
   );
@@ -417,20 +546,13 @@ const SearchGame = ({ algorithm, onComplete, arraySize }) => {
   const [found, setFound] = useState(false);
   const [checked, setChecked] = useState([]);
   const [isRunning, setIsRunning] = useState(false);
+  const [low, setLow] = useState(0);
+  const [high, setHigh] = useState(0);
   const [speed, setSpeed] = useState(300);
-  
-  const lowRef = useRef(0);
-  const highRef = useRef(0);
-  const currentRef = useRef(-1);
-  const jumpSizeRef = useRef(0);
   const intervalRef = useRef(null);
-  const checkedRef = useRef([]);
 
   useEffect(() => {
     initializeArray();
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current);
-    };
   }, [algorithm, arraySize]);
 
   const initializeArray = () => {
@@ -441,109 +563,113 @@ const SearchGame = ({ algorithm, onComplete, arraySize }) => {
     setCurrent(-1);
     setFound(false);
     setChecked([]);
+    setLow(0);
+    setHigh(sorted.length - 1);
     setIsRunning(false);
-    lowRef.current = 0;
-    highRef.current = sorted.length - 1;
-    currentRef.current = -1;
-    jumpSizeRef.current = Math.floor(Math.sqrt(sorted.length));
-    checkedRef.current = [];
   };
 
-  const step = () => {
-    if (algorithm === 'linear') {
-      if (currentRef.current >= array.length - 1 || found) {
+  const stepLinearSearch = () => {
+    if (current >= array.length - 1 || found) {
+      setIsRunning(false);
+      return;
+    }
+
+    const next = current + 1;
+    setCurrent(next);
+    setChecked([...checked, next]);
+
+    if (array[next] === target) {
+      setFound(true);
+      setIsRunning(false);
+      onComplete();
+    }
+  };
+
+  const stepBinarySearch = () => {
+    if (low > high || found) {
+      setIsRunning(false);
+      return;
+    }
+
+    const mid = Math.floor((low + high) / 2);
+    setCurrent(mid);
+    setChecked([...checked, mid]);
+
+    if (array[mid] === target) {
+      setFound(true);
+      setIsRunning(false);
+      onComplete();
+      return;
+    }
+
+    if (array[mid] < target) {
+      setLow(mid + 1);
+    } else {
+      setHigh(mid - 1);
+    }
+  };
+
+  const stepJumpSearch = () => {
+    const jump = Math.floor(Math.sqrt(array.length));
+    
+    if (current === -1) {
+      setCurrent(0);
+      setChecked([0]);
+      return;
+    }
+    
+    if (found || current >= array.length) {
+      setIsRunning(false);
+      return;
+    }
+    
+    // Jump forward
+    let nextJump = Math.min(current + jump, array.length - 1);
+    
+    if (array[nextJump] < target) {
+      setCurrent(nextJump);
+      setChecked([...checked, nextJump]);
+    } else {
+      // Linear search in the block
+      let linearPos = current + 1;
+      
+      if (linearPos >= array.length) {
         setIsRunning(false);
         return;
       }
-      currentRef.current++;
-      checkedRef.current.push(currentRef.current);
-      setCurrent(currentRef.current);
-      setChecked([...checkedRef.current]);
       
-      if (array[currentRef.current] === target) {
+      setCurrent(linearPos);
+      setChecked([...checked, linearPos]);
+      
+      if (array[linearPos] === target) {
         setFound(true);
         setIsRunning(false);
-        if (intervalRef.current) clearInterval(intervalRef.current);
         onComplete();
-      }
-    } else if (algorithm === 'binary') {
-      if (lowRef.current > highRef.current || found) {
-        setIsRunning(false);
-        return;
-      }
-      const mid = Math.floor((lowRef.current + highRef.current) / 2);
-      currentRef.current = mid;
-      checkedRef.current.push(mid);
-      setCurrent(mid);
-      setChecked([...checkedRef.current]);
-      
-      if (array[mid] === target) {
-        setFound(true);
-        setIsRunning(false);
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        onComplete();
-      } else if (array[mid] < target) {
-        lowRef.current = mid + 1;
-      } else {
-        highRef.current = mid - 1;
-      }
-    } else if (algorithm === 'jump') {
-      if (currentRef.current >= array.length || found) {
-        setIsRunning(false);
-        return;
-      }
-      
-      if (currentRef.current === -1) {
-        currentRef.current = 0;
-      } else {
-        currentRef.current = Math.min(currentRef.current + jumpSizeRef.current, array.length - 1);
-      }
-      
-      checkedRef.current.push(currentRef.current);
-      setCurrent(currentRef.current);
-      setChecked([...checkedRef.current]);
-      
-      if (array[currentRef.current] === target) {
-        setFound(true);
-        setIsRunning(false);
-        if (intervalRef.current) clearInterval(intervalRef.current);
-        onComplete();
-      } else if (array[currentRef.current] > target) {
-        // Linear search back
-        let linearIdx = currentRef.current - jumpSizeRef.current;
-        while (linearIdx < currentRef.current) {
-          if (array[linearIdx] === target) {
-            currentRef.current = linearIdx;
-            checkedRef.current.push(linearIdx);
-            setCurrent(linearIdx);
-            setChecked([...checkedRef.current]);
-            setFound(true);
-            setIsRunning(false);
-            if (intervalRef.current) clearInterval(intervalRef.current);
-            onComplete();
-            return;
-          }
-          linearIdx++;
-        }
+      } else if (array[linearPos] > target) {
         setIsRunning(false);
       }
     }
   };
 
   useEffect(() => {
-    if (isRunning && !found) {
-      intervalRef.current = setInterval(step, speed);
+    if (isRunning) {
+      intervalRef.current = setInterval(() => {
+        if (algorithm === 'linear') stepLinearSearch();
+        else if (algorithm === 'binary') stepBinarySearch();
+        else if (algorithm === 'jump') stepJumpSearch();
+      }, speed);
     } else {
       if (intervalRef.current) clearInterval(intervalRef.current);
     }
+
     return () => {
       if (intervalRef.current) clearInterval(intervalRef.current);
     };
-  }, [isRunning, found, speed]);
+  }, [isRunning, current, low, high, found, speed]);
 
   const toggleRunning = () => setIsRunning(!isRunning);
   const reset = () => {
-    if (intervalRef.current) clearInterval(intervalRef.current);
+    setIsRunning(false);
     initializeArray();
   };
 
@@ -553,20 +679,36 @@ const SearchGame = ({ algorithm, onComplete, arraySize }) => {
     <div className="flex flex-col space-y-6">
       <div className="flex items-center justify-between">
         <div className="flex space-x-3">
-          <button onClick={toggleRunning} className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center space-x-2 font-medium">
+          <button
+            onClick={toggleRunning}
+            className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 flex items-center space-x-2 font-medium"
+          >
             {isRunning ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
             <span>{isRunning ? 'Pause' : 'Start'}</span>
           </button>
-          <button onClick={reset} className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 flex items-center space-x-2 font-medium">
+          <button
+            onClick={reset}
+            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300 flex items-center space-x-2 font-medium"
+          >
             <RotateCcw className="w-4 h-4" />
             <span>Reset</span>
           </button>
         </div>
+
         <div className="flex items-center space-x-4">
-          <div className="text-sm text-gray-700">Target: <span className="font-mono font-bold text-lg text-red-600">{target}</span></div>
+          <div className="text-sm text-gray-700">
+            Target: <span className="font-mono font-bold text-lg text-red-600">{target}</span>
+          </div>
           <label className="flex items-center space-x-2 text-sm text-gray-700">
             <span>Speed:</span>
-            <input type="range" min="100" max="1000" value={1100 - speed} onChange={(e) => setSpeed(1100 - Number(e.target.value))} className="w-32" />
+            <input
+              type="range"
+              min="100"
+              max="1000"
+              value={speed}
+              onChange={(e) => setSpeed(Number(e.target.value))}
+              className="w-32"
+            />
           </label>
           {found && (
             <div className="bg-green-50 border border-green-200 text-green-800 px-4 py-2 rounded-md text-sm font-medium flex items-center space-x-2">
@@ -581,14 +723,19 @@ const SearchGame = ({ algorithm, onComplete, arraySize }) => {
         <div className="flex items-center space-x-1 justify-center">
           {array.map((value, idx) => {
             let bgColor = 'bg-gray-100';
-            if (idx === current) bgColor = found ? 'bg-green-500' : 'bg-blue-500';
-            else if (checked.includes(idx)) bgColor = 'bg-blue-100';
+            if (idx === current) bgColor = 'bg-blue-500';
+            if (checked.includes(idx) && idx !== current) bgColor = 'bg-blue-100';
+            if (found && idx === current) bgColor = 'bg-green-500';
             
             let textColor = 'text-gray-700';
-            if (idx === current) textColor = 'text-white';
+            if (idx === current || (found && idx === current)) textColor = 'text-white';
             
             return (
-              <div key={idx} className={`${bgColor} ${textColor} flex items-center justify-center border border-gray-300 font-mono font-semibold transition-all duration-200`} style={{ width: `${cellWidth}px`, height: `${cellWidth}px` }}>
+              <div
+                key={idx}
+                className={`${bgColor} ${textColor} flex items-center justify-center border border-gray-300 font-mono font-semibold transition-all duration-200`}
+                style={{ width: `${cellWidth}px`, height: `${cellWidth}px` }}
+              >
                 {arraySize <= 30 && value}
               </div>
             );
@@ -597,10 +744,22 @@ const SearchGame = ({ algorithm, onComplete, arraySize }) => {
       </div>
       
       <div className="flex space-x-6 text-sm text-gray-600">
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-gray-100 border border-gray-300"></div><span>Unchecked</span></div>
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-blue-100 border border-gray-300"></div><span>Checked</span></div>
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-blue-500 border border-gray-300"></div><span>Current</span></div>
-        <div className="flex items-center space-x-2"><div className="w-4 h-4 bg-green-500 border border-gray-300"></div><span>Found</span></div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-gray-100 border border-gray-300"></div>
+          <span>Unchecked</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-blue-100 border border-gray-300"></div>
+          <span>Checked</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-blue-500 border border-gray-300"></div>
+          <span>Current</span>
+        </div>
+        <div className="flex items-center space-x-2">
+          <div className="w-4 h-4 bg-green-500 border border-gray-300"></div>
+          <span>Found</span>
+        </div>
       </div>
     </div>
   );
@@ -645,7 +804,10 @@ export default function AlgorithmVisualizer() {
                 <h1 className="text-2xl font-bold text-gray-900">Algorithm Visualizer</h1>
                 <p className="text-sm text-gray-600 mt-1">Interactive algorithm learning platform</p>
               </div>
-              <button onClick={() => setShowSettings(!showSettings)} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 flex items-center space-x-2 text-gray-700">
+              <button
+                onClick={() => setShowSettings(!showSettings)}
+                className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 flex items-center space-x-2 text-gray-700"
+              >
                 <Settings className="w-4 h-4" />
                 <span>Settings</span>
               </button>
@@ -658,12 +820,30 @@ export default function AlgorithmVisualizer() {
             <div className="max-w-7xl mx-auto px-6 py-4">
               <div className="grid grid-cols-2 gap-6">
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Grid Size (Graph Algorithms): {gridSize}x{gridSize}</label>
-                  <input type="range" min="10" max="40" value={gridSize} onChange={(e) => setGridSize(Number(e.target.value))} className="w-full" />
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Grid Size (Graph Algorithms): {gridSize}x{gridSize}
+                  </label>
+                  <input
+                    type="range"
+                    min="10"
+                    max="40"
+                    value={gridSize}
+                    onChange={(e) => setGridSize(Number(e.target.value))}
+                    className="w-full"
+                  />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">Array Size (Sorting/Search): {arraySize} elements</label>
-                  <input type="range" min="10" max="100" value={arraySize} onChange={(e) => setArraySize(Number(e.target.value))} className="w-full" />
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Array Size (Sorting/Search): {arraySize} elements
+                  </label>
+                  <input
+                    type="range"
+                    min="10"
+                    max="100"
+                    value={arraySize}
+                    onChange={(e) => setArraySize(Number(e.target.value))}
+                    className="w-full"
+                  />
                 </div>
               </div>
             </div>
@@ -679,10 +859,16 @@ export default function AlgorithmVisualizer() {
                   const isCompleted = completedAlgorithms.has(algo.id);
                   
                   return (
-                    <button key={algo.id} onClick={() => setSelectedAlgorithm(algo)} className="bg-white border border-gray-200 rounded-lg p-4 hover:border-blue-500 hover:shadow-md transition-all text-left group">
+                    <button
+                      key={algo.id}
+                      onClick={() => setSelectedAlgorithm(algo)}
+                      className="bg-white border border-gray-200 rounded-lg p-4 hover:border-blue-500 hover:shadow-md transition-all text-left group"
+                    >
                       <div className="flex items-start justify-between">
                         <div className="flex-1">
-                          <h3 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">{algo.name}</h3>
+                          <h3 className="font-semibold text-gray-900 group-hover:text-blue-600 transition-colors">
+                            {algo.name}
+                          </h3>
                           <p className="text-xs text-gray-500 mt-1 font-mono">{algo.complexity}</p>
                         </div>
                         <div className="ml-4 flex items-center space-x-2">
@@ -719,7 +905,10 @@ export default function AlgorithmVisualizer() {
       <div className="border-b border-gray-200 bg-white">
         <div className="max-w-7xl mx-auto px-6 py-4">
           <div className="flex items-center justify-between">
-            <button onClick={() => setSelectedAlgorithm(null)} className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 flex items-center space-x-2 text-gray-700">
+            <button
+              onClick={() => setSelectedAlgorithm(null)}
+              className="px-4 py-2 border border-gray-300 rounded-md hover:bg-gray-50 flex items-center space-x-2 text-gray-700"
+            >
               <Home className="w-4 h-4" />
               <span>Back</span>
             </button>
